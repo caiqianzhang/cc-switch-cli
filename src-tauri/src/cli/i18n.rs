@@ -5170,6 +5170,38 @@ pub mod texts {
         }
     }
 
+    pub fn tui_settings_proxy_auth_token_label() -> &'static str {
+        if is_chinese() {
+            "鉴权 Token"
+        } else {
+            "Auth Token"
+        }
+    }
+
+    pub fn tui_settings_proxy_auth_token_prompt() -> &'static str {
+        if is_chinese() {
+            "输入新的代理共享密钥（留空提交 = 清除自定义，下次启动自动生成新密钥）"
+        } else {
+            "Enter a new proxy shared token (submit empty to clear the custom one; a fresh token is generated on next start)"
+        }
+    }
+
+    pub fn tui_toast_proxy_auth_token_updated() -> &'static str {
+        if is_chinese() {
+            "鉴权 Token 已更新，重启代理 worker 后生效"
+        } else {
+            "Auth token updated; restart the proxy worker to apply"
+        }
+    }
+
+    pub fn tui_settings_proxy_auth_token_pending() -> &'static str {
+        if is_chinese() {
+            "（待自动生成）"
+        } else {
+            "(auto-generated on start)"
+        }
+    }
+
     pub fn tui_settings_proxy_listen_address_prompt() -> &'static str {
         if is_chinese() {
             "输入监听地址（如 127.0.0.1 / localhost / 0.0.0.0）"

@@ -579,14 +579,16 @@ impl GlobalOutboundProxySettingsItem {
 pub enum LocalProxySettingsItem {
     ListenAddress,
     ListenPort,
+    AuthToken,
     AutoFailover,
     RotateIp,
 }
 
 impl LocalProxySettingsItem {
-    pub const ALL: [LocalProxySettingsItem; 4] = [
+    pub const ALL: [LocalProxySettingsItem; 5] = [
         LocalProxySettingsItem::ListenAddress,
         LocalProxySettingsItem::ListenPort,
+        LocalProxySettingsItem::AuthToken,
         LocalProxySettingsItem::AutoFailover,
         LocalProxySettingsItem::RotateIp,
     ];

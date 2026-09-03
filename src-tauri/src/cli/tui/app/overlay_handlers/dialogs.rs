@@ -382,6 +382,22 @@ impl App {
             TextSubmit::SettingsProxyListenPort => {
                 self.handle_settings_proxy_listen_port_submit(data, raw)
             }
+            TextSubmit::SettingsProxyAuthToken => {
+                let trimmed = raw.trim().to_string();
+                let result = if trimmed.is_empty() {
+                    crate::settings::update_proxy_auth_token(None)
+                } else {
+                    crate::settings::update_proxy_auth_token(Some(trimmed))
+                };
+                match result {
+                    Ok(()) => self.push_toast(
+                        texts::tui_toast_proxy_auth_token_updated(),
+                        ToastKind::Success,
+                    ),
+                    Err(err) => self.push_toast(err.to_string(), ToastKind::Error),
+                }
+                Action::None
+            }
             TextSubmit::SettingsOutboundProxyUrl => {
                 let trimmed = raw.trim().to_string();
                 let mut config = self

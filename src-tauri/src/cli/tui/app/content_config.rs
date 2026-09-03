@@ -1163,6 +1163,15 @@ impl App {
                     });
                     Action::None
                 }
+                Some(LocalProxySettingsItem::AuthToken) => {
+                    self.overlay = Overlay::TextInput(TextInputState {
+                        title: texts::tui_settings_proxy_title().to_string(),
+                        prompt: texts::tui_settings_proxy_auth_token_prompt().to_string(),
+                        input: TextInput::new(String::new()),
+                        submit: TextSubmit::SettingsProxyAuthToken,
+                    });
+                    Action::None
+                }
                 Some(LocalProxySettingsItem::ListenPort) => {
                     if data.proxy.has_active_worker_for(&self.app_type) {
                         self.push_toast(

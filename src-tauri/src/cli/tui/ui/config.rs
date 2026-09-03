@@ -121,6 +121,7 @@ pub(super) fn local_proxy_settings_item_label(item: &LocalProxySettingsItem) -> 
     match item {
         LocalProxySettingsItem::ListenAddress => texts::tui_settings_proxy_listen_address_label(),
         LocalProxySettingsItem::ListenPort => texts::tui_settings_proxy_listen_port_label(),
+        LocalProxySettingsItem::AuthToken => texts::tui_settings_proxy_auth_token_label(),
         LocalProxySettingsItem::AutoFailover => crate::t!("Automatic failover", "自动故障转移"),
         LocalProxySettingsItem::RotateIp => texts::tui_settings_proxy_rotate_ip_label(),
     }
@@ -4111,6 +4112,11 @@ pub(super) fn render_settings_proxy(
             LocalProxySettingsItem::ListenPort => (
                 local_proxy_settings_item_label(item).to_string(),
                 data.proxy.configured_listen_port.to_string(),
+            ),
+            LocalProxySettingsItem::AuthToken => (
+                local_proxy_settings_item_label(item).to_string(),
+                crate::settings::get_proxy_auth_token()
+                    .unwrap_or_else(|| texts::tui_settings_proxy_auth_token_pending().to_string()),
             ),
             LocalProxySettingsItem::AutoFailover => (
                 local_proxy_settings_item_label(item).to_string(),

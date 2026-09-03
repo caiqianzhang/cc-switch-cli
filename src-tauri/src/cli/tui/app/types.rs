@@ -4500,6 +4500,7 @@ pub enum TextSubmit {
     ConfigBackupName,
     SettingsProxyListenAddress,
     SettingsProxyListenPort,
+    SettingsProxyAuthToken,
     SettingsOutboundProxyUrl,
     SettingsOutboundProxyUsername,
     SettingsOutboundProxyPassword,
