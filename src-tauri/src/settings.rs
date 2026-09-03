@@ -846,7 +846,22 @@ pub fn get_proxy_auth_token() -> Option<String> {
         .map(str::to_string)
 }
 
-/// 设置/清除代理共享密钥并持久化。生效需重启代理 worker。
+/// 读取代理共享密钥;未配置则自动生成 32 位十六进制密钥并持久化。
+/// 默认强制鉴权:worker 启动时调用,保证代理永远持卡运行。
+pub fn ensure_proxy_auth_token() -> String {
+    if let Some(token) = get_proxy_auth_token() {
+        return token;
+    }
+    let token = uuid::Uuid::new_v4().simple().to_string();
+    let mut guard = settings_store().write().expect("写入设置锁失败");
+    guard.proxy_auth_token = Some(token.clone());
+    if let Err(err) = guard.save() {
+        log::warn!("持久化自动生成的代理共享密钥失败: {err}");
+    }
+    token
+}
+
+/// 设置/清除代理共享密钥并持久化。清除后下次 worker 启动会自动生成新密钥(鉴权保持开启)。
 pub fn update_proxy_auth_token(token: Option<String>) -> Result<(), AppError> {
     let mut guard = settings_store().write().expect("写入设置锁失败");
     guard.proxy_auth_token = token

@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Proxy Security**: Optional shared-secret authentication for the proxy data plane. Set it with `cc-switch proxy auth-token <TOKEN>` (or `--clear`); once configured the proxy rejects requests without a matching `x-api-key`/`Authorization` header, takeover projection writes the real token into live app configs (instead of the `PROXY_MANAGED` placeholder), and listening on a non-loopback address refuses to start until a token exists. Default remains off (loopback deployments unchanged).
+- **Proxy Security**: Shared-secret authentication is now enforced by default on the proxy data plane. On first start a random token is generated and persisted (`proxyAuthToken` in settings.json); requests must carry a matching `x-api-key`/`Authorization` header, takeover projection writes the real token into live app configs (instead of the `PROXY_MANAGED` placeholder), so local managed clients keep working unchanged. `cc-switch proxy auth-token <TOKEN>` sets a custom token, `--clear` regenerates, no-arg shows masked status. Listening on a non-loopback address additionally requires an explicit token.
 
 ### Fixed
 

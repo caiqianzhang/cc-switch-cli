@@ -89,8 +89,8 @@ fn auth_token_command(token: Option<String>, clear: bool) -> Result<(), AppError
     if clear {
         crate::settings::update_proxy_auth_token(None)?;
         println!("{}", crate::t!(
-            "Proxy auth token cleared; requests are no longer authenticated. Restart the proxy worker (`cc-switch proxy enable`) to apply.",
-            "已清除代理共享密钥,请求不再校验。重启代理生效(`cc-switch proxy enable`)。"
+            "Custom proxy auth token cleared; a fresh token is generated automatically on the next worker start (authentication stays enabled). Restart the proxy worker (`cc-switch proxy enable`) to apply.",
+            "已清除自定义代理共享密钥;下次 worker 启动将自动生成新密钥(鉴权保持开启)。重启代理生效(`cc-switch proxy enable`)。"
         ));
         return Ok(());
     }

@@ -6459,11 +6459,14 @@ wire_api = "responses"
             Some(format!("http://127.0.0.1:{preferred_port}").as_str()),
         );
         assert_env_str(live_env, "ANTHROPIC_API_KEY", None);
-        assert_env_str(
-            live_env,
-            "ANTHROPIC_AUTH_TOKEN",
-            Some(PROXY_TOKEN_PLACEHOLDER),
-        );
+        // 默认强制鉴权:live 配置写入的是当前生效的代理凭证
+        //(未自定义时为自动生成的共享密钥),而非字面占位符
+        let live_token = live_env
+            .get("ANTHROPIC_AUTH_TOKEN")
+            .and_then(Value::as_str)
+            .expect("ANTHROPIC_AUTH_TOKEN should exist");
+        assert!(is_proxy_managed_value(live_token), "{live_token}");
+        assert_ne!(live_token, "fresh-live-token");
     }
 
     #[tokio::test]

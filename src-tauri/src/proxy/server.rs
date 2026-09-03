@@ -79,12 +79,14 @@ async fn proxy_auth_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
+    use axum::response::IntoResponse;
     if let Some(expected) = state.auth_token.as_deref().filter(|t| !t.is_empty()) {
         if !proxy_auth_header_matches(request.headers(), expected) {
-            return axum::response::IntoResponse::into_response((
+            return (
                 axum::http::StatusCode::UNAUTHORIZED,
                 "proxy auth failed: missing or invalid proxy token",
-            ));
+            )
+                .into_response();
         }
     }
     next.run(request).await
@@ -267,7 +269,7 @@ impl ProxyServer {
                 codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
                 gemini_shadow: Arc::new(GeminiShadowStore::default()),
                 ip_rotation: Arc::new(IpRotationHandle::new()),
-                auth_token: crate::settings::get_proxy_auth_token(),
+                auth_token: Some(crate::settings::ensure_proxy_auth_token()),
             },
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
@@ -607,7 +609,7 @@ mod tests {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             ip_rotation: Arc::new(IpRotationHandle::new()),
-            auth_token: crate::settings::get_proxy_auth_token(),
+            auth_token: Some(crate::settings::ensure_proxy_auth_token()),
         }
     }
 
@@ -638,9 +640,13 @@ mod tests {
     }
 
     async fn fetch_models(port: u16, path: &str) -> (reqwest::StatusCode, serde_json::Value) {
-        let response = reqwest::get(format!("http://127.0.0.1:{port}{path}"))
-            .await
-            .expect("request models endpoint");
+        let client = reqwest::Client::new();
+        let mut request = client.get(format!("http://127.0.0.1:{port}{path}"));
+        // 默认强制鉴权:带上隔离环境里自动生成的共享密钥
+        if let Some(token) = crate::settings::get_proxy_auth_token() {
+            request = request.header("x-api-key", token);
+        }
+        let response = request.send().await.expect("request models endpoint");
         let status = response.status();
         let body = response.json().await.expect("parse models response");
         (status, body)
