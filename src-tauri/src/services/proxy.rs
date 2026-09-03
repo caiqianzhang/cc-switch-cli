@@ -4257,10 +4257,13 @@ impl ProxyService {
             return ExternalProxyStatusProbe::Unreachable;
         };
 
-        let response = client
-            .get(Self::build_session_status_url(session))
-            .send()
-            .await;
+        // 状态探测也是对 worker 的一次 HTTP 请求:默认强制鉴权后必须携带
+        // 共享密钥,否则会被中间件 401,TUI 仪表盘将拿不到运行数据。
+        let mut request = client.get(Self::build_session_status_url(session));
+        if let Some(token) = crate::settings::get_proxy_auth_token() {
+            request = request.header("x-api-key", token);
+        }
+        let response = request.send().await;
         let Ok(response) = response else {
             return ExternalProxyStatusProbe::Unreachable;
         };
