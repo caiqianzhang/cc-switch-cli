@@ -27,6 +27,16 @@ pub enum ProxyCommand {
     /// Manually trigger an IP rotation via the daemon (429 workaround)
     RotateIp,
 
+    /// Set / clear / inspect the proxy shared-secret token
+    AuthToken {
+        /// New token value; omit to show current status
+        token: Option<String>,
+
+        /// Remove the token (disable proxy request authentication)
+        #[arg(long)]
+        clear: bool,
+    },
+
     /// Configure the selected app's proxy route
     Config {
         /// Set the global proxy listen address
@@ -61,6 +71,7 @@ pub fn execute(cmd: ProxyCommand, app: Option<AppType>) -> Result<(), AppError> 
         ProxyCommand::Enable => set_proxy_enabled(app_type, true),
         ProxyCommand::Disable => set_proxy_enabled(app_type, false),
         ProxyCommand::RotateIp => rotate_ip(),
+        ProxyCommand::AuthToken { token, clear } => auth_token_command(token, clear),
         ProxyCommand::Config {
             listen_address,
             listen_port,
@@ -70,6 +81,62 @@ pub fn execute(cmd: ProxyCommand, app: Option<AppType>) -> Result<(), AppError> 
             listen_port,
             takeovers,
         } => serve_proxy(listen_address, listen_port, takeovers),
+    }
+}
+
+/// 设置/清除/查看代理共享密钥。
+fn auth_token_command(token: Option<String>, clear: bool) -> Result<(), AppError> {
+    if clear {
+        crate::settings::update_proxy_auth_token(None)?;
+        println!("{}", crate::t!(
+            "Proxy auth token cleared; requests are no longer authenticated. Restart the proxy worker (`cc-switch proxy enable`) to apply.",
+            "已清除代理共享密钥,请求不再校验。重启代理生效(`cc-switch proxy enable`)。"
+        ));
+        return Ok(());
+    }
+    match token {
+        Some(value) => {
+            let trimmed = value.trim().to_string();
+            if trimmed.is_empty() {
+                return Err(AppError::Message(
+                    crate::t!(
+                        "Token must not be empty (use --clear to remove it)",
+                        "token 不能为空(清除请用 --clear)"
+                    )
+                    .to_string(),
+                ));
+            }
+            crate::settings::update_proxy_auth_token(Some(trimmed))?;
+            println!("{}", crate::t!(
+                "Proxy auth token set. It takes effect after the worker restarts (`cc-switch proxy enable`); re-run takeover so local clients receive the new token, then restart those client sessions.",
+                "已设置代理共享密钥。重启代理 worker(`cc-switch proxy enable`)后生效;随后重新执行 takeover 让本机客户端写入新 token,已运行的客户端会话需重启。"
+            ));
+            Ok(())
+        }
+        None => {
+            match crate::settings::get_proxy_auth_token() {
+                Some(masked) => {
+                    let shown = if masked.len() > 8 {
+                        format!("{}...{}", &masked[..4], &masked[masked.len() - 4..])
+                    } else {
+                        "***".to_string()
+                    };
+                    println!(
+                        "{}{}",
+                        crate::t!("Proxy auth token: set (", "代理共享密钥:已设置 ("),
+                        format!("{}) ", shown)
+                    );
+                }
+                None => println!(
+                    "{}",
+                    crate::t!(
+                        "Proxy auth token: not set (requests are not authenticated; loopback-only bind recommended)",
+                        "代理共享密钥:未设置(请求不校验;建议仅回环监听)"
+                    )
+                ),
+            }
+            Ok(())
+        }
     }
 }
 

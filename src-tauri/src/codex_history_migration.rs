@@ -282,7 +282,7 @@ fn codex_live_is_proxy_managed(live: &Value) -> bool {
     live.get("auth")
         .and_then(|auth| auth.get("OPENAI_API_KEY"))
         .and_then(Value::as_str)
-        == Some("PROXY_MANAGED")
+        .is_some_and(crate::services::proxy::is_proxy_managed_value)
         || live
             .get("config")
             .and_then(Value::as_str)
@@ -290,7 +290,9 @@ fn codex_live_is_proxy_managed(live: &Value) -> bool {
 }
 
 fn codex_config_text_is_proxy_managed(config_text: &str) -> bool {
-    extract_codex_experimental_bearer_token(config_text).as_deref() == Some("PROXY_MANAGED")
+    extract_codex_experimental_bearer_token(config_text)
+        .as_deref()
+        .is_some_and(crate::services::proxy::is_proxy_managed_value)
 }
 
 fn canonical_dir_string(dir: &Path) -> String {

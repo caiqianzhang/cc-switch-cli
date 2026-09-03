@@ -38,6 +38,18 @@ use crate::{
 use crate::claude_model_config::CLAUDE_CONTEXT_WINDOW_ENV_KEYS;
 
 const PROXY_TOKEN_PLACEHOLDER: &str = "PROXY_MANAGED";
+
+/// takeover 写入 live 配置的客户端凭证:配置了共享密钥时写真实 token,
+/// 否则维持占位符(本机客户端无需感知)。
+pub fn proxy_client_credential() -> String {
+    crate::settings::get_proxy_auth_token().unwrap_or_else(|| PROXY_TOKEN_PLACEHOLDER.to_string())
+}
+
+/// 判断某凭证值是否代表"代理托管":占位符,或与当前共享密钥一致。
+pub fn is_proxy_managed_value(value: &str) -> bool {
+    value == PROXY_TOKEN_PLACEHOLDER
+        || crate::settings::get_proxy_auth_token().as_deref() == Some(value)
+}
 const PROXY_RUNTIME_SESSION_KEY: &str = "proxy_runtime_session";
 const PROXY_RUNTIME_KIND_ENV_KEY: &str = "CC_SWITCH_PROXY_RUNTIME_KIND";
 const PROXY_RUNTIME_SESSION_TOKEN_ENV_KEY: &str = "CC_SWITCH_PROXY_SESSION_TOKEN";
@@ -335,7 +347,7 @@ impl ProxyService {
                 let mut replaced_any = false;
                 for key in token_keys {
                     if env.contains_key(key) {
-                        env.insert(key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                        env.insert(key.to_string(), json!(proxy_client_credential()));
                         replaced_any = true;
                     }
                 }
@@ -343,7 +355,7 @@ impl ProxyService {
                 if !replaced_any {
                     env.insert(
                         "ANTHROPIC_AUTH_TOKEN".to_string(),
-                        json!(PROXY_TOKEN_PLACEHOLDER),
+                        json!(proxy_client_credential()),
                     );
                 }
             }
@@ -356,7 +368,10 @@ impl ProxyService {
                 } else {
                     "ANTHROPIC_API_KEY"
                 };
-                env.insert(placeholder_key.to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                env.insert(
+                    placeholder_key.to_string(),
+                    json!(proxy_client_credential()),
+                );
             }
         }
     }
@@ -2157,7 +2172,7 @@ impl ProxyService {
         .any(|key| {
             env.get(*key)
                 .and_then(Value::as_str)
-                .is_some_and(|value| value == PROXY_TOKEN_PLACEHOLDER)
+                .is_some_and(|value| is_proxy_managed_value(value))
         })
     }
 
@@ -2166,7 +2181,7 @@ impl ProxyService {
             .get("auth")
             .and_then(|auth| auth.get("OPENAI_API_KEY"))
             .and_then(Value::as_str)
-            .is_some_and(|value| value == PROXY_TOKEN_PLACEHOLDER)
+            .is_some_and(|value| is_proxy_managed_value(value))
         {
             return true;
         }
@@ -2176,7 +2191,7 @@ impl ProxyService {
             .and_then(Value::as_str)
             .and_then(crate::codex_config::extract_codex_experimental_bearer_token)
             .as_deref()
-            == Some(PROXY_TOKEN_PLACEHOLDER)
+            .is_some_and(|v| is_proxy_managed_value(v))
     }
 
     fn codex_live_base_url(config: &Value) -> Option<String> {
@@ -2219,7 +2234,9 @@ impl ProxyService {
     }
 
     fn codex_auth_has_proxy_placeholder(auth: &Value) -> bool {
-        auth.get("OPENAI_API_KEY").and_then(Value::as_str) == Some(PROXY_TOKEN_PLACEHOLDER)
+        auth.get("OPENAI_API_KEY")
+            .and_then(Value::as_str)
+            .is_some_and(|v| is_proxy_managed_value(v))
     }
 
     fn is_gemini_live_taken_over(config: &Value) -> bool {
@@ -2227,7 +2244,7 @@ impl ProxyService {
             .get("env")
             .and_then(|env| env.get("GEMINI_API_KEY"))
             .and_then(Value::as_str)
-            .is_some_and(|value| value == PROXY_TOKEN_PLACEHOLDER)
+            .is_some_and(|value| is_proxy_managed_value(value))
     }
 
     fn live_has_proxy_placeholder_for_app(app_type: &AppType, config: &Value) -> bool {
@@ -3225,21 +3242,21 @@ impl ProxyService {
                             .map(|value| (key, value.trim().to_string()))
                     })
                 })
-                .filter(|(_, token)| !token.is_empty() && token != PROXY_TOKEN_PLACEHOLDER)
+                .filter(|(_, token)| !token.is_empty() && !is_proxy_managed_value(token))
                 .map(|(key, token)| LiveTokenSync::Claude(key, token)),
             AppType::Codex => live_config
                 .get("auth")
                 .and_then(|auth| auth.get("OPENAI_API_KEY"))
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .filter(|token| !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER)
+                .filter(|token| !token.is_empty() && !is_proxy_managed_value(*token))
                 .map(|token| LiveTokenSync::Codex(token.to_string())),
             AppType::Gemini => live_config
                 .get("env")
                 .and_then(|env| env.get("GEMINI_API_KEY"))
                 .and_then(Value::as_str)
                 .map(str::trim)
-                .filter(|token| !token.is_empty() && *token != PROXY_TOKEN_PLACEHOLDER)
+                .filter(|token| !token.is_empty() && !is_proxy_managed_value(*token))
                 .map(|token| LiveTokenSync::Gemini(token.to_string())),
             _ => None,
         }) else {
@@ -3508,7 +3525,10 @@ impl ProxyService {
                     .get_mut("auth")
                     .and_then(Value::as_object_mut)
                     .ok_or_else(|| "codex auth must be an object".to_string())?;
-                auth.insert("OPENAI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                auth.insert(
+                    "OPENAI_API_KEY".to_string(),
+                    json!(proxy_client_credential()),
+                );
 
                 let config_text = root
                     .get("config")
@@ -3540,7 +3560,10 @@ impl ProxyService {
                     .and_then(Value::as_object_mut)
                     .ok_or_else(|| "gemini env must be an object".to_string())?;
                 env.insert("GOOGLE_GEMINI_BASE_URL".to_string(), json!(proxy_url));
-                env.insert("GEMINI_API_KEY".to_string(), json!(PROXY_TOKEN_PLACEHOLDER));
+                env.insert(
+                    "GEMINI_API_KEY".to_string(),
+                    json!(proxy_client_credential()),
+                );
             }
             _ => {
                 return Err(format!(
@@ -3603,7 +3626,7 @@ impl ProxyService {
                         if env
                             .get(key)
                             .and_then(Value::as_str)
-                            .is_some_and(|value| value == PROXY_TOKEN_PLACEHOLDER)
+                            .is_some_and(|value| is_proxy_managed_value(value))
                         {
                             env.remove(key);
                         }
@@ -3615,7 +3638,7 @@ impl ProxyService {
                     if auth
                         .get("OPENAI_API_KEY")
                         .and_then(Value::as_str)
-                        .is_some_and(|value| value == PROXY_TOKEN_PLACEHOLDER)
+                        .is_some_and(|value| is_proxy_managed_value(value))
                     {
                         auth.remove("OPENAI_API_KEY");
                     }
@@ -3626,7 +3649,7 @@ impl ProxyService {
                     let config_text =
                         crate::codex_config::remove_codex_experimental_bearer_token_if(
                             &config_text,
-                            |token| token == PROXY_TOKEN_PLACEHOLDER,
+                            |token| is_proxy_managed_value(token),
                         )
                         .map_err(|error| {
                             format!("clear Codex takeover placeholder failed: {error}")
@@ -3646,7 +3669,7 @@ impl ProxyService {
                     if env
                         .get("GEMINI_API_KEY")
                         .and_then(Value::as_str)
-                        .is_some_and(|value| value == PROXY_TOKEN_PLACEHOLDER)
+                        .is_some_and(|value| is_proxy_managed_value(value))
                     {
                         env.remove("GEMINI_API_KEY");
                     }
@@ -3706,7 +3729,7 @@ impl ProxyService {
                     if auth
                         .get("OPENAI_API_KEY")
                         .and_then(Value::as_str)
-                        .is_some_and(|value| value == PROXY_TOKEN_PLACEHOLDER)
+                        .is_some_and(|value| is_proxy_managed_value(value))
                     {
                         let live_config = crate::codex_config::prepare_codex_provider_live_config(
                             auth,
@@ -5237,6 +5260,28 @@ experimental_bearer_token = "PROXY_MANAGED"
             set_test_home_override(self.old_home.as_deref().map(Path::new));
             crate::settings::reload_test_settings();
         }
+    }
+
+    #[test]
+    #[serial]
+    fn proxy_client_credential_prefers_configured_token() {
+        let temp_home = TempDir::new().expect("create temp home");
+        let _env = TestHomeEnvGuard::set(temp_home.path());
+
+        assert_eq!(proxy_client_credential(), PROXY_TOKEN_PLACEHOLDER);
+        assert!(is_proxy_managed_value(PROXY_TOKEN_PLACEHOLDER));
+        assert!(!is_proxy_managed_value("tok-123"));
+
+        crate::settings::update_proxy_auth_token(Some("tok-123".into()))
+            .expect("set proxy auth token");
+        assert_eq!(proxy_client_credential(), "tok-123");
+        assert!(is_proxy_managed_value("tok-123"));
+        assert!(is_proxy_managed_value(PROXY_TOKEN_PLACEHOLDER));
+        assert!(!is_proxy_managed_value("other"));
+
+        crate::settings::update_proxy_auth_token(None).expect("clear proxy auth token");
+        assert_eq!(proxy_client_credential(), PROXY_TOKEN_PLACEHOLDER);
+        assert!(!is_proxy_managed_value("tok-123"));
     }
 
     #[tokio::test]

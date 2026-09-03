@@ -618,6 +618,10 @@ pub struct AppSettings {
     /// Codex 自定义端点列表
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub custom_endpoints_codex: HashMap<String, CustomEndpoint>,
+    /// 代理共享密钥:设置后,代理数据面校验请求头(x-api-key / Bearer),
+    /// 非回环监听地址时强制要求配置。None = 不校验(仅建议回环使用)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_auth_token: Option<String>,
 }
 
 fn default_show_in_tray() -> bool {
@@ -635,6 +639,7 @@ fn default_usage_auto_sync() -> bool {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            proxy_auth_token: None,
             show_in_tray: true,
             minimize_to_tray_on_close: true,
             enable_claude_plugin_integration: false,
@@ -827,6 +832,27 @@ pub fn reload_settings() -> Result<(), AppError> {
     let fresh_settings = AppSettings::load();
     let mut guard = settings_store().write().expect("写入设置锁失败");
     *guard = fresh_settings;
+    Ok(())
+}
+
+/// 读取代理共享密钥(去空白;空串视为未设置)。
+pub fn get_proxy_auth_token() -> Option<String> {
+    let guard = settings_store().read().expect("读取设置锁失败");
+    guard
+        .proxy_auth_token
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
+/// 设置/清除代理共享密钥并持久化。生效需重启代理 worker。
+pub fn update_proxy_auth_token(token: Option<String>) -> Result<(), AppError> {
+    let mut guard = settings_store().write().expect("写入设置锁失败");
+    guard.proxy_auth_token = token
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    guard.save()?;
     Ok(())
 }
 

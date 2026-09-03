@@ -39,6 +39,55 @@ pub struct ProxyServerState {
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
     pub gemini_shadow: Arc<GeminiShadowStore>,
     pub ip_rotation: Arc<IpRotationHandle>,
+    /// serve 时捕获的共享密钥;None/空 = 不校验(回环默认)。
+    pub auth_token: Option<String>,
+}
+
+/// 非回环监听地址必须配置共享密钥:代理转发时附带真实上游凭证,
+/// 无鉴权暴露到局域网等于开放中继。
+fn validate_proxy_bind_auth(listen_address: &str, auth_token: Option<&str>) -> Result<(), String> {
+    let normalized = listen_address.trim();
+    let loopback = normalized.is_empty()
+        || normalized == "127.0.0.1"
+        || normalized == "::1"
+        || normalized == "localhost";
+    let has_token = auth_token.map(str::trim).is_some_and(|t| !t.is_empty());
+    if !loopback && !has_token {
+        return Err(format!(
+            "代理监听地址 {normalized} 为非回环地址,必须先配置共享密钥(`cc-switch proxy auth-token <TOKEN>`)再启动:代理会携带真实上游凭证转发,无鉴权暴露等于开放中继"
+        ));
+    }
+    Ok(())
+}
+
+/// 请求头是否携带匹配的代理共享密钥(x-api-key 精确匹配,或 Bearer/raw authorization)。
+fn proxy_auth_header_matches(headers: &axum::http::HeaderMap, expected: &str) -> bool {
+    let api_key_ok = headers
+        .get("x-api-key")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim() == expected);
+    let bearer_ok = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.strip_prefix("Bearer ").unwrap_or(value).trim() == expected)
+        .unwrap_or(false);
+    api_key_ok || bearer_ok
+}
+
+async fn proxy_auth_middleware(
+    axum::extract::State(state): axum::extract::State<ProxyServerState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if let Some(expected) = state.auth_token.as_deref().filter(|t| !t.is_empty()) {
+        if !proxy_auth_header_matches(request.headers(), expected) {
+            return axum::response::IntoResponse::into_response((
+                axum::http::StatusCode::UNAUTHORIZED,
+                "proxy auth failed: missing or invalid proxy token",
+            ));
+        }
+    }
+    next.run(request).await
 }
 
 impl ProxyServerState {
@@ -218,6 +267,7 @@ impl ProxyServer {
                 codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
                 gemini_shadow: Arc::new(GeminiShadowStore::default()),
                 ip_rotation: Arc::new(IpRotationHandle::new()),
+                auth_token: crate::settings::get_proxy_auth_token(),
             },
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
@@ -235,6 +285,10 @@ impl ProxyServer {
         }
 
         let bind_config = self.state.config.read().await.clone();
+        validate_proxy_bind_auth(
+            &bind_config.listen_address,
+            self.state.auth_token.as_deref(),
+        )?;
         let addr: SocketAddr =
             format!("{}:{}", bind_config.listen_address, bind_config.listen_port)
                 .parse()
@@ -390,6 +444,10 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", post(handlers::handle_gemini))
             .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
             .layer(cors)
+            .layer(axum::middleware::from_fn_with_state(
+                self.state.clone(),
+                proxy_auth_middleware,
+            ))
             .with_state(self.state.clone())
     }
 }
@@ -399,6 +457,42 @@ mod tests {
     use super::*;
 
     use serde_json::json;
+
+    #[test]
+    fn validate_proxy_bind_auth_requires_token_for_non_loopback() {
+        assert!(validate_proxy_bind_auth("127.0.0.1", None).is_ok());
+        assert!(validate_proxy_bind_auth("::1", None).is_ok());
+        assert!(validate_proxy_bind_auth("", None).is_ok());
+        assert!(validate_proxy_bind_auth("0.0.0.0", None).is_err());
+        assert!(validate_proxy_bind_auth("192.168.1.33", None).is_err());
+        assert!(validate_proxy_bind_auth("192.168.1.33", Some("   ")).is_err());
+        assert!(validate_proxy_bind_auth("0.0.0.0", Some("secret")).is_ok());
+    }
+
+    #[test]
+    fn proxy_auth_header_matches_accepts_api_key_and_bearer() {
+        let mut headers = axum::http::HeaderMap::new();
+        assert!(!proxy_auth_header_matches(&headers, "secret"));
+
+        headers.insert("x-api-key", axum::http::HeaderValue::from_static("secret"));
+        assert!(proxy_auth_header_matches(&headers, "secret"));
+        assert!(!proxy_auth_header_matches(&headers, "other"));
+
+        let mut bearer = axum::http::HeaderMap::new();
+        bearer.insert(
+            "authorization",
+            axum::http::HeaderValue::from_static("Bearer secret"),
+        );
+        assert!(proxy_auth_header_matches(&bearer, "secret"));
+
+        let mut raw = axum::http::HeaderMap::new();
+        raw.insert(
+            "authorization",
+            axum::http::HeaderValue::from_static("secret"),
+        );
+        assert!(proxy_auth_header_matches(&raw, "secret"));
+    }
+
     use serial_test::serial;
     use std::env;
     use tempfile::TempDir;
@@ -513,6 +607,7 @@ mod tests {
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             ip_rotation: Arc::new(IpRotationHandle::new()),
+            auth_token: crate::settings::get_proxy_auth_token(),
         }
     }
 

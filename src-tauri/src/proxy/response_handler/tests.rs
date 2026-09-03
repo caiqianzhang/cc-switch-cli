@@ -57,6 +57,7 @@ fn test_state_with_db(db: Arc<Database>) -> ProxyServerState {
         codex_chat_history: Arc::new(Default::default()),
         gemini_shadow: Arc::new(GeminiShadowStore::default()),
         ip_rotation: Arc::new(IpRotationHandle::new()),
+        auth_token: None,
     }
 }
 
