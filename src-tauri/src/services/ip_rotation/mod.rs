@@ -73,6 +73,12 @@ pub struct IpRotationSettings {
     /// 单次换 IP 流程的整体超时秒数(含断开/连接/DNS 等待;各阶段最坏
     /// 合计约 410s,默认 540s 留足余量)。设为 0 会使每次触发立即超时。
     pub rotate_timeout_secs: u64,
+    /// DDNS 轮询开关:daemon 常驻任务周期比对"当前优选 IPv6"与"上次
+    /// 已写入 DNS 的地址",变化即更新 AAAA。覆盖非 429 引起的地址变化
+    /// (光猫重启、ISP 改号、手动重拨等)。缺省 false,不影响现有行为。
+    pub dns_poll_enabled: bool,
+    /// DDNS 轮询间隔秒数(实际生效值下限 30,防止高频打百度云 API)。
+    pub dns_poll_interval_secs: u64,
 }
 
 impl Default for IpRotationSettings {
@@ -91,6 +97,8 @@ impl Default for IpRotationSettings {
             dns_api_base: None,
             cooldown_secs: 600,
             rotate_timeout_secs: 540,
+            dns_poll_enabled: false,
+            dns_poll_interval_secs: 60,
         }
     }
 }
@@ -123,7 +131,7 @@ impl IpRotationSettings {
     }
 
     /// 解析后的 DNS 目标:AK/SK 缺失时返回 None(重拨照常,DNS 跳过)。
-    fn effective_dns_target(&self) -> Option<DnsTarget> {
+    pub(crate) fn effective_dns_target(&self) -> Option<DnsTarget> {
         let access_key = self
             .dns_ak
             .as_deref()
@@ -176,6 +184,99 @@ impl IpRotationSettings {
         let host = without_scheme.split('/').next().unwrap_or("192.168.1.1");
         host.split(':').next().unwrap_or(host).to_string()
     }
+}
+
+// ============================================================
+// DDNS 轮询(daemon 常驻任务)
+// ============================================================
+
+/// 轮询决策:当前优选地址与上次已写入地址不同即需更新。
+/// `current` 为 `None`(重拨中/无全局地址)时跳过,宁可不写也不写错。
+fn ddns_should_update(current: Option<&str>, last_written: Option<&str>) -> bool {
+    match (current, last_written) {
+        (Some(now), Some(last)) => now != last,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
+/// 轮询状态文件:记录"上次成功写入 DNS 的地址",daemon 重启后不重复写。
+fn ddns_state_path() -> std::path::PathBuf {
+    crate::config::get_app_config_dir().join("ddns_state.json")
+}
+
+fn read_ddns_state() -> Option<String> {
+    let content = std::fs::read_to_string(ddns_state_path()).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
+    value
+        .get("last_ipv6")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn write_ddns_state(ip: &str) {
+    let payload = serde_json::json!({
+        "last_ipv6": ip,
+        "updated_at": chrono::Utc::now().to_rfc3339(),
+    });
+    if let Some(parent) = ddns_state_path().parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(err) = std::fs::write(ddns_state_path(), payload.to_string()) {
+        warn!("[DDNS] 写状态文件失败: {err}");
+    }
+}
+
+/// daemon 启动时调用一次:常驻 DDNS 轮询任务。
+/// 每轮重读设置(用户改配置/间隔即时生效),未启用时以 60s 慢速空转,
+/// 单轮开销近似为零;与 429 换 IP 流程的 DNS 写入天然幂等共存。
+pub fn spawn_ddns_poller() {
+    tokio::spawn(async move {
+        loop {
+            let _ = crate::settings::reload_settings();
+            let settings = crate::settings::get_ip_rotation_settings();
+            let interval = match &settings {
+                Some(s) if s.enabled && s.dns_poll_enabled => s.dns_poll_interval_secs.max(30),
+                _ => 60,
+            };
+            match ddns_poll_once().await {
+                Ok(Some(message)) => log::info!("[DDNS] {message}"),
+                Ok(None) => {}
+                Err(err) => log::warn!("[DDNS] 轮询更新失败: {err}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        }
+    });
+}
+
+/// 单轮:读设置 → 取当前优选 IPv6 → 与上次写入比对 → 变化则 upsert。
+/// 返回 `Some(描述)` 表示实际执行了一次 DNS 写入。
+async fn ddns_poll_once() -> Result<Option<String>, String> {
+    let Some(settings) = crate::settings::get_ip_rotation_settings() else {
+        return Ok(None);
+    };
+    if !settings.enabled || !settings.dns_poll_enabled {
+        return Ok(None);
+    }
+    let Some(target) = settings.effective_dns_target() else {
+        return Ok(None);
+    };
+    let iface = modem_facing_interface(&settings.router_url);
+    let ips = baidu_dns::get_global_ipv6s_on(iface).await;
+    let current = ips.first().cloned();
+    if !ddns_should_update(current.as_deref(), read_ddns_state().as_deref()) {
+        return Ok(None);
+    }
+    let Some(ip) = current else {
+        return Ok(None);
+    };
+    let outcome = target.upsert_aaaa(&ip).await?;
+    write_ddns_state(&ip);
+    Ok(Some(format!(
+        "检测到地址变化,已更新 AAAA({}): {ip}",
+        outcome.as_str()
+    )))
 }
 
 /// 供应商 id 匹配(大小写不敏感,trim 后比较)。
@@ -1226,5 +1327,29 @@ mod tests {
             .await
             .expect("redial must succeed even without ipv6");
         assert!(dns_seen.lock().unwrap().is_empty());
+    }
+    #[test]
+    fn ddns_should_update_rules() {
+        assert!(ddns_should_update(Some("2001:db8::1"), None));
+        assert!(ddns_should_update(Some("2001:db8::2"), Some("2001:db8::1")));
+        assert!(!ddns_should_update(
+            Some("2001:db8::1"),
+            Some("2001:db8::1")
+        ));
+        // 无当前地址(重拨中)永不触发
+        assert!(!ddns_should_update(None, None));
+        assert!(!ddns_should_update(None, Some("2001:db8::1")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ddns_state_round_trip() {
+        let temp = tempfile::TempDir::new().expect("temp home");
+        let _guard = crate::test_support::TestEnvGuard::isolated(temp.path());
+        assert_eq!(read_ddns_state(), None);
+        write_ddns_state("2001:db8::aa");
+        assert_eq!(read_ddns_state().as_deref(), Some("2001:db8::aa"));
+        write_ddns_state("2001:db8::bb");
+        assert_eq!(read_ddns_state().as_deref(), Some("2001:db8::bb"));
     }
 }

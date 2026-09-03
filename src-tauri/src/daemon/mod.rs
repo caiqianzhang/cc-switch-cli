@@ -139,6 +139,9 @@ pub async fn run(binary_path: PathBuf, pidfile: &PidFile) -> Result<(), String> 
     let supervisor_arc = Arc::new(supervisor);
 
     install_signal_handlers(supervisor_arc.clone());
+    // DDNS 轮询:任何原因的公网 IPv6 变化都会被周期同步到 DNS 记录
+    // (与 429 换 IP 流程的 DNS 写入幂等共存;未启用时零开销空转)。
+    crate::services::ip_rotation::spawn_ddns_poller();
 
     ipc::server::run(listener, supervisor_arc, async move {
         shutdown.notified().await;
