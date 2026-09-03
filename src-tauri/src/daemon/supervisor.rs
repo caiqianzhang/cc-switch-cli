@@ -898,6 +898,52 @@ impl Supervisor {
         }
     }
 
+    /// 手动换 IP:向其中一个存活 worker 发 SIGUSR1,由 worker 侧门控后执行。
+    /// 与 ReloadOutboundProxy 的单向信号模式一致,结果以 worker 日志为准。
+    async fn handle_rotate_ip(&self) -> Response {
+        // settings 快照是进程级惰性加载:先刷新,保证预检读到最新配置
+        let _ = crate::settings::reload_settings();
+        // 预检最常见误配置(未启用):worker 侧仍有完整门控,这里只为即时反馈
+        if !crate::settings::get_ip_rotation_settings()
+            .map(|settings| settings.enabled)
+            .unwrap_or(false)
+        {
+            return Response::Error {
+                message: "ipRotation is not enabled".to_string(),
+            };
+        }
+        let workers = {
+            let inner = self.inner.lock().await;
+            inner.workers.values().cloned().collect::<Vec<_>>()
+        };
+        // 换 IP 是机器级操作(重拨的是光猫 PPPoE,对整机生效):只需一个
+        // worker 执行。只信号一个存活 worker,避免多 worker 并发重拨击穿
+        // 各自进程内的单飞不变量(光猫仅允许一个管理会话)。
+        // 注:升级前遗留、由 daemon 收养的旧 worker 未注册 SIGUSR1 handler
+        //(默认处置为终止),信号会令其重启(在途请求中断,代理随后恢复);
+        // 因此排序上优先选择新二进制启动的 worker,收养 worker 仅作兜底。
+        let mut candidates = workers;
+        candidates.sort_by(|a, b| {
+            (a.adopted, a.app_type.as_str()).cmp(&(b.adopted, b.app_type.as_str()))
+        });
+        let Some(target) = candidates
+            .into_iter()
+            .find(|worker| worker.pid != 0 && is_process_alive_for_signal(worker.pid))
+        else {
+            return Response::Error {
+                message: "no running proxy worker".to_string(),
+            };
+        };
+        if send_sigusr1(Some(target.pid)).is_err() {
+            return Response::Error {
+                message: format!("rotate-ip signal failed for: {}", target.app_type),
+            };
+        }
+        Response::RotateIpQueued {
+            worker_pids: vec![target.pid],
+        }
+    }
+
     pub async fn shutdown(&self) {
         let _spawn_guard = self.spawn_lock.lock().await;
         let stop_plan = self.plan_stop_all_workers(true).await;
@@ -932,13 +978,36 @@ impl Supervisor {
         stderr: Option<tokio::process::ChildStderr>,
     ) {
         let app_key = app.as_str().to_string();
-        let stderr_task = stderr.map(|mut stderr| {
+        let stderr_task = stderr.map(|stderr| {
+            let app_key = app_key.clone();
             tokio::spawn(async move {
-                let mut bytes = Vec::new();
-                match stderr.read_to_end(&mut bytes).await {
-                    Ok(_) => Some(bytes),
-                    Err(err) => Some(format!("failed to read worker stderr: {err}").into_bytes()),
+                // worker 日志(env_logger→stderr)逐行转发进 daemon 日志:原先
+                // read_to_end 整体吞进内存、仅异常退出时打印,正常运行期间
+                // worker 的所有日志(换 IP 全链路、代理运行日志)都不可见。
+                // 同时保留尾部 8KB 供退出时的启动失败诊断。
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                const TAIL_LIMIT: usize = 8192;
+                let mut tail: Vec<u8> = Vec::new();
+                let mut lines = BufReader::new(stderr).lines();
+                loop {
+                    match lines.next_line().await {
+                        Ok(Some(line)) => {
+                            log::info!("[worker:{app_key}] {line}");
+                            tail.extend_from_slice(line.as_bytes());
+                            tail.push(b'\n');
+                            if tail.len() > TAIL_LIMIT {
+                                let drop = tail.len() - TAIL_LIMIT;
+                                tail.drain(0..drop);
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(err) => {
+                            log::warn!("[daemon] {app_key} worker stderr read failed: {err}");
+                            break;
+                        }
+                    }
                 }
+                tail
             })
         });
         let exit_status = match child.wait().await {
@@ -949,7 +1018,7 @@ impl Supervisor {
             }
         };
         let stderr_output = match stderr_task {
-            Some(task) => task.await.ok().flatten().unwrap_or_default(),
+            Some(task) => task.await.ok().unwrap_or_default(),
             None => Vec::new(),
         };
         let startup_failure = worker_exit_message(&exit_status, &stderr_output);
@@ -1164,6 +1233,7 @@ impl Handler for Supervisor {
             }
             Request::SetGlobalEnabled { enabled } => self.handle_set_global_enabled(enabled).await,
             Request::ReloadOutboundProxy => self.handle_reload_outbound_proxy().await,
+            Request::RotateIp => self.handle_rotate_ip().await,
             Request::Shutdown => self.handle_shutdown().await,
         }
     }
@@ -1216,6 +1286,16 @@ pub(crate) fn send_sigwinch(pid: Option<u32>) -> Result<(), String> {
         return Ok(());
     }
     send_signal(pid, libc::SIGWINCH, "SIGWINCH")
+}
+
+pub(crate) fn send_sigusr1(pid: Option<u32>) -> Result<(), String> {
+    let Some(pid) = pid else {
+        return Ok(());
+    };
+    if pid == 0 {
+        return Ok(());
+    }
+    send_signal(pid, libc::SIGUSR1, "SIGUSR1")
 }
 
 fn send_sigkill(pid: Option<u32>) -> Result<(), String> {

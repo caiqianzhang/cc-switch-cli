@@ -12,6 +12,7 @@ pub mod env_checker;
 #[cfg(feature = "cli")]
 pub mod env_manager;
 pub mod global_proxy;
+pub mod ip_rotation;
 #[cfg(feature = "cli")]
 pub mod local_env_check;
 pub mod mcp;

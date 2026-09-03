@@ -17,6 +17,8 @@ mod codex_temp_launch;
 mod config;
 mod editor;
 mod helpers;
+#[cfg(unix)]
+mod ip_rotation;
 mod mcp;
 mod pricing;
 mod prompts;
@@ -1094,6 +1096,10 @@ pub(crate) fn handle_action(
         Action::SetProxyAutoFailover { app_type, enabled } => {
             settings::set_proxy_auto_failover(&mut ctx, app_type, enabled)
         }
+        #[cfg(unix)]
+        Action::RotateIp => ip_rotation::request_manual_rotate(&mut ctx),
+        #[cfg(not(unix))]
+        Action::RotateIp => Ok(()),
         Action::EnableProxyAndAutoFailover { app_type } => {
             settings::enable_proxy_and_auto_failover(&mut ctx, app_type)
         }

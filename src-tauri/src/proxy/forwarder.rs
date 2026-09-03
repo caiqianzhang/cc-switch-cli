@@ -33,6 +33,7 @@ pub struct RequestForwarder {
     session_client_provided: bool,
     codex_chat_history: Option<Arc<CodexChatHistoryStore>>,
     gemini_shadow: Option<Arc<GeminiShadowStore>>,
+    ip_rotation: Option<Arc<crate::services::ip_rotation::IpRotationHandle>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -171,6 +172,7 @@ impl RequestForwarder {
             session_client_provided: false,
             codex_chat_history: None,
             gemini_shadow: None,
+            ip_rotation: None,
         })
     }
 
@@ -207,6 +209,41 @@ impl RequestForwarder {
     pub fn with_gemini_shadow(mut self, shadow: Arc<GeminiShadowStore>) -> Self {
         self.gemini_shadow = Some(shadow);
         self
+    }
+
+    pub fn with_ip_rotation(
+        mut self,
+        ip_rotation: Arc<crate::services::ip_rotation::IpRotationHandle>,
+    ) -> Self {
+        self.ip_rotation = Some(ip_rotation);
+        self
+    }
+
+    /// 上游以非 2xx 状态响应某供应商后调用。429 且命中 ipRotation 配置时,
+    /// 异步触发光猫重拨换 IP;其余情况零开销返回。
+    ///
+    /// 本方法只在 `AttemptDecision::ProviderFailure` 分支调用,这是充分的:
+    /// `classify_upstream_response` 与 `classify_attempt_error` 中 429
+    /// 不属于任何 NeutralRelease(400/405/406/413/414/415/422/501 与
+    /// codex-official 401/403)或 FatalStop 集合,恒定归类为 ProviderFailure。
+    fn notify_upstream_status(&self, provider_id: &str, status: u16) {
+        if let Some(ip_rotation) = &self.ip_rotation {
+            ip_rotation.maybe_trigger(provider_id, status);
+        }
+    }
+
+    /// 上游请求以错误收场时调用;仅透传真正的上游 HTTP 状态(如 429)。
+    fn notify_upstream_error(&self, provider_id: &str, error: &ProxyError) {
+        if let ProxyError::UpstreamError {
+            status: crate::services::ip_rotation::HTTP_TOO_MANY_REQUESTS,
+            ..
+        } = error
+        {
+            self.notify_upstream_status(
+                provider_id,
+                crate::services::ip_rotation::HTTP_TOO_MANY_REQUESTS,
+            );
+        }
     }
 
     #[cfg(test)]
@@ -360,6 +397,7 @@ impl RequestForwarder {
                                     )
                                     .await;
                             }
+                            self.notify_upstream_status(&provider.id, response.status().as_u16());
 
                             if claude_error_path && !provider_needs_transform {
                                 last_error = Some(ForwardFailure::new(
@@ -423,6 +461,7 @@ impl RequestForwarder {
                                     )
                                     .await;
                             }
+                            self.notify_upstream_error(&provider.id, &error);
                             last_error = Some(ForwardFailure::new(Some(provider.clone()), error));
                         }
                         AttemptDecision::NeutralRelease | AttemptDecision::FatalStop => {
@@ -605,6 +644,7 @@ impl RequestForwarder {
                                     )
                                     .await;
                             }
+                            self.notify_upstream_status(&provider.id, response.status.as_u16());
 
                             if claude_error_path && !provider_needs_transform {
                                 last_error = Some(ForwardFailure::new(
@@ -668,6 +708,7 @@ impl RequestForwarder {
                                     )
                                     .await;
                             }
+                            self.notify_upstream_error(&provider.id, &error);
                             last_error = Some(ForwardFailure::new(Some(provider.clone()), error));
                         }
                         AttemptDecision::NeutralRelease | AttemptDecision::FatalStop => {

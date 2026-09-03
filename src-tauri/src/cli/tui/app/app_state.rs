@@ -333,6 +333,7 @@ pub enum Action {
         app_type: AppType,
         enabled: bool,
     },
+    RotateIp,
     SetGlobalOutboundProxy {
         config: crate::services::GlobalOutboundProxyConfig,
     },
@@ -579,13 +580,15 @@ pub enum LocalProxySettingsItem {
     ListenAddress,
     ListenPort,
     AutoFailover,
+    RotateIp,
 }
 
 impl LocalProxySettingsItem {
-    pub const ALL: [LocalProxySettingsItem; 3] = [
+    pub const ALL: [LocalProxySettingsItem; 4] = [
         LocalProxySettingsItem::ListenAddress,
         LocalProxySettingsItem::ListenPort,
         LocalProxySettingsItem::AutoFailover,
+        LocalProxySettingsItem::RotateIp,
     ];
 }
 

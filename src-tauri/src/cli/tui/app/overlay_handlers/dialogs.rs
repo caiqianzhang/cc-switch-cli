@@ -114,6 +114,7 @@ impl App {
                     ConfirmAction::PricingDelete { model_id } => Action::PricingDelete {
                         model_id: model_id.clone(),
                     },
+                    ConfirmAction::ProxyRotateIp => Action::RotateIp,
                     ConfirmAction::SessionDelete {
                         key,
                         provider_id,

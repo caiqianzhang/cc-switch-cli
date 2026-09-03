@@ -39,3 +39,8 @@ docs/superpowers/
 .superpowers/
 skills-lock.json
 /skills/
+
+# 本地密钥文件(百度云 DNS / PPPoE)
+baidu.key
+panel.env
+*.key

@@ -12,7 +12,8 @@ use tokio::{
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::{
-    app_config::AppType, database::Database, provider::Provider, services::proxy::ProxyService,
+    app_config::AppType, database::Database, provider::Provider,
+    services::ip_rotation::IpRotationHandle, services::proxy::ProxyService,
 };
 
 use super::{
@@ -37,6 +38,7 @@ pub struct ProxyServerState {
     pub provider_router: Arc<ProviderRouter>,
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
     pub gemini_shadow: Arc<GeminiShadowStore>,
+    pub ip_rotation: Arc<IpRotationHandle>,
 }
 
 impl ProxyServerState {
@@ -190,6 +192,11 @@ pub struct ProxyServer {
 }
 
 impl ProxyServer {
+    /// 换 IP 触发句柄(与请求路径共享同一单飞/冷却状态)。
+    pub fn ip_rotation(&self) -> Arc<IpRotationHandle> {
+        Arc::clone(&self.state.ip_rotation)
+    }
+
     pub fn new(config: ProxyConfig, db: Arc<Database>) -> Self {
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
         let managed_session_token = std::env::var(PROXY_RUNTIME_SESSION_TOKEN_ENV_KEY)
@@ -210,6 +217,7 @@ impl ProxyServer {
                 provider_router,
                 codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
                 gemini_shadow: Arc::new(GeminiShadowStore::default()),
+                ip_rotation: Arc::new(IpRotationHandle::new()),
             },
             shutdown_tx: Arc::new(RwLock::new(None)),
             server_handle: Arc::new(RwLock::new(None)),
@@ -504,6 +512,7 @@ mod tests {
             provider_router: Arc::new(ProviderRouter::new(db)),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            ip_rotation: Arc::new(IpRotationHandle::new()),
         }
     }
 

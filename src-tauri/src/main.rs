@@ -22,10 +22,20 @@ fn init_logger_if_needed(cli: &Cli) {
     }
 
     // 初始化日志（交互模式和命令行模式都避免干扰输出）
+    // daemon 收养的 worker(stderr 由 supervisor 收集进 daemon 日志)需要
+    // info 级别,否则换 IP 全链路等运行日志根本不会发出;
+    // 前台命令保持 error 默认,避免 INFO 干扰命令输出
+    #[cfg(unix)]
+    let is_daemon_worker =
+        std::env::var_os(cc_switch_lib::daemon::supervisor::DAEMON_SOCKET_ENV).is_some();
+    #[cfg(not(unix))]
+    let is_daemon_worker = false;
     let log_level = if cli.verbose {
         "debug"
+    } else if is_daemon_worker {
+        "info"
     } else {
-        "error" // 默认只显示错误日志，避免 INFO 日志干扰命令输出
+        "error"
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 }

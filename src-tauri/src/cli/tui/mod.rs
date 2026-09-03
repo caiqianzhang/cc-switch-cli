@@ -2262,7 +2262,8 @@ fn cache_invalidation_for_action(action: &Action) -> CacheInvalidation {
         | Action::CheckUpdate
         | Action::ConfirmUpdate
         | Action::CancelUpdate
-        | Action::CancelUpdateCheck => CacheInvalidation::None,
+        | Action::CancelUpdateCheck
+        | Action::RotateIp => CacheInvalidation::None,
 
         Action::ConfigImport { .. }
         | Action::ConfigRestoreBackup { .. }

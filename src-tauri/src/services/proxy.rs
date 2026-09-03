@@ -458,6 +458,18 @@ impl ProxyService {
         }
     }
 
+    /// 运行中代理服务器的换 IP 触发句柄(未启动时为 None)。
+    pub async fn ip_rotation_handle(
+        &self,
+    ) -> Option<Arc<crate::services::ip_rotation::IpRotationHandle>> {
+        self.runtime
+            .server
+            .read()
+            .await
+            .as_ref()
+            .map(crate::proxy::server::ProxyServer::ip_rotation)
+    }
+
     pub async fn start(&self) -> Result<ProxyServerInfo, String> {
         let _guard = crate::services::state_coordination::acquire_restore_mutation_guard().await?;
         let config = self.get_config().await.map_err(|e| e.to_string())?;

@@ -184,6 +184,30 @@ mod services {
         }
     }
 
+    /// 镜像 src/services/ip_rotation.rs 的 IpRotationSettings serde 表面,
+    /// 供内联 settings.rs 编译(与 src 内真实类型保持字段一致)。
+    pub mod ip_rotation {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+        #[serde(rename_all = "camelCase", default)]
+        pub struct IpRotationSettings {
+            pub enabled: bool,
+            pub provider_id: String,
+            pub router_url: String,
+            pub wan_name: String,
+            pub pppoe_username: Option<String>,
+            pub pppoe_password: Option<String>,
+            pub dns_ak: Option<String>,
+            pub dns_sk: Option<String>,
+            pub dns_zone: Option<String>,
+            pub dns_sub: Option<String>,
+            pub dns_api_base: Option<String>,
+            pub cooldown_secs: u64,
+            pub rotate_timeout_secs: u64,
+        }
+    }
+
     pub mod webdav {
         use crate::error::AppError;
         use url::Url;

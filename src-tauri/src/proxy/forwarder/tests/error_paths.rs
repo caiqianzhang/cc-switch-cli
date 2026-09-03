@@ -18,6 +18,8 @@ use crate::{
         response::is_sse_response,
         types::RectifierConfig,
     },
+    services::ip_rotation::{IpRotationHandle, IpRotationSettings},
+    test_support::TestEnvGuard,
 };
 
 #[tokio::test]
@@ -637,5 +639,84 @@ async fn claude_streaming_success_path_does_not_trigger_rectifier_retry() {
         2
     );
 
+    server.abort();
+}
+
+/// 行为接线测试:真实 mock 上游返回 429 时,forwarder 的 ProviderFailure
+/// 分支必须同步触发 IpRotationHandle 记账(见 ip_rotation 模块测试)。C4
+/// 盲审 MINOR-1:防止未来重构丢掉 notify_upstream_status 挂钩而无人失败。
+#[tokio::test]
+async fn upstream_429_wires_into_ip_rotation_trigger() {
+    let temp = tempfile::tempdir().expect("temp home");
+    let _env = TestEnvGuard::isolated(temp.path());
+    // 隔离设置存储中启用 ipRotation;panel_url 指向未监听端口,
+    // 后台换 IP 任务连接失败后快速结束,不影响下面的确定性断言
+    crate::settings::update_settings(crate::settings::AppSettings {
+        ip_rotation: Some(IpRotationSettings {
+            enabled: true,
+            provider_id: "p1".to_string(),
+            router_url: "http://127.0.0.1:1".to_string(),
+            pppoe_username: Some("pppoe-user".to_string()),
+            pppoe_password: Some("pppoe-pass".to_string()),
+            dns_ak: Some("ak".to_string()),
+            dns_sk: Some("sk".to_string()),
+            cooldown_secs: 0,
+            ..IpRotationSettings::default()
+        }),
+        ..Default::default()
+    })
+    .expect("enable ip rotation in isolated settings");
+
+    let (primary_url, _hits, server) = spawn_mock_upstream(
+        StatusCode::TOO_MANY_REQUESTS,
+        json!({"error": {"message": "rate limited"}}),
+    )
+    .await;
+    let provider = claude_provider("p1", &primary_url, None);
+    let (db, router) = test_router().await;
+    db.save_provider("claude", &provider)
+        .expect("save provider for health tracking");
+
+    let handle = std::sync::Arc::new(IpRotationHandle::new());
+    let forwarder = RequestForwarder::new(router.clone())
+        .expect("create forwarder")
+        .with_ip_rotation(handle.clone());
+
+    let error = forwarder
+        .forward_buffered_response(
+            &AppType::Claude,
+            "/v1/messages",
+            claude_request_body(),
+            &HeaderMap::new(),
+            vec![provider],
+            ForwardOptions {
+                max_retries: 0,
+                request_timeout: Some(Duration::from_secs(2)),
+                bypass_circuit_breaker: false,
+            },
+            RectifierConfig::default(),
+        )
+        .await
+        .expect_err("single-provider Claude 429 should surface as UpstreamError");
+
+    match error {
+        ProxyError::UpstreamError { status, .. } => assert_eq!(status, 429),
+        other => panic!("expected UpstreamError, got {other:?}"),
+    }
+
+    // 触发是同步记账的(maybe_trigger → try_acquire),确定性断言
+    assert!(
+        handle.has_cooldown_record(),
+        "upstream 429 must record a rotation attempt synchronously"
+    );
+
+    // 后台任务连接 127.0.0.1:1 失败后应释放 inflight
+    let released = tokio::time::timeout(Duration::from_secs(5), async {
+        while handle.is_rotating() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(released.is_ok(), "rotation task should release inflight");
     server.abort();
 }

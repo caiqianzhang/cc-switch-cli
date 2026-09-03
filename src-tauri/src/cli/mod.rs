@@ -261,6 +261,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_proxy_rotate_ip_subcommand() {
+        let cli = Cli::parse_from(["cc-switch", "proxy", "rotate-ip"]);
+
+        match cli.command {
+            Some(Commands::Proxy(super::commands::proxy::ProxyCommand::RotateIp)) => {}
+            _ => panic!("expected proxy rotate-ip command"),
+        }
+    }
+
+    #[test]
     fn parses_proxy_disable_subcommand() {
         let cli = Cli::parse_from(["cc-switch", "proxy", "disable"]);
 

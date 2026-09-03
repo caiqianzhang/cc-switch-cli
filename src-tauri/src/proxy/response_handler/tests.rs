@@ -19,6 +19,7 @@ use crate::{
         provider_router::ProviderRouter, providers::gemini_shadow::GeminiShadowStore,
         types::ProxyConfig,
     },
+    services::ip_rotation::IpRotationHandle,
     test_support::TestEnvGuard,
 };
 
@@ -55,6 +56,7 @@ fn test_state_with_db(db: Arc<Database>) -> ProxyServerState {
         provider_router: Arc::new(ProviderRouter::new(db)),
         codex_chat_history: Arc::new(Default::default()),
         gemini_shadow: Arc::new(GeminiShadowStore::default()),
+        ip_rotation: Arc::new(IpRotationHandle::new()),
     }
 }
 

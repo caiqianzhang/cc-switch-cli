@@ -39,6 +39,11 @@ pub enum Request {
     /// Foreground asks the daemon and active workers to reload the persisted
     /// global outbound proxy. The URL itself never crosses IPC.
     ReloadOutboundProxy,
+    /// Foreground/TUI asks the daemon to forward a manual IP-rotation trigger
+    /// to running proxy worker(s) via SIGUSR1. Execution happens inside the
+    /// worker, sharing the single-flight gate with automatic 429 triggers;
+    /// the rotation outcome is logged by the worker, not returned here.
+    RotateIp,
     /// Force the daemon to stop the worker (if any) and exit.
     Shutdown,
 }
@@ -47,6 +52,11 @@ pub enum Request {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Response {
     Ok,
+    /// Manual IP-rotation signal was delivered to the listed worker pids.
+    /// The rotation outcome itself is logged by the worker.
+    RotateIpQueued {
+        worker_pids: Vec<u32>,
+    },
     Worker {
         address: String,
         port: u16,
@@ -272,6 +282,14 @@ mod tests {
         .expect("decode legacy worker state");
 
         assert!(decoded.runtime_status.is_none());
+    }
+
+    #[test]
+    fn rotate_ip_messages_roundtrip() {
+        roundtrip_request(Request::RotateIp);
+        roundtrip_response(Response::RotateIpQueued {
+            worker_pids: vec![123, 456],
+        });
     }
 
     #[test]

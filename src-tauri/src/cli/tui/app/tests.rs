@@ -15583,6 +15583,44 @@ mod tests {
     }
 
     #[test]
+    fn settings_proxy_rotate_ip_warns_when_proxy_not_running() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::SettingsProxy;
+        app.focus = Focus::Content;
+        app.settings_proxy_idx = LocalProxySettingsItem::ALL
+            .iter()
+            .position(|item| *item == LocalProxySettingsItem::RotateIp)
+            .expect("rotate ip item should exist");
+
+        let data = UiData::default();
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.toast.as_ref(), Some(toast) if toast.kind == ToastKind::Warning));
+    }
+
+    #[test]
+    fn settings_proxy_rotate_ip_opens_confirm_dialog_when_running() {
+        let mut app = App::new(Some(AppType::Claude));
+        app.route = Route::SettingsProxy;
+        app.focus = Focus::Content;
+        app.settings_proxy_idx = LocalProxySettingsItem::ALL
+            .iter()
+            .position(|item| *item == LocalProxySettingsItem::RotateIp)
+            .expect("rotate ip item should exist");
+
+        let mut data = UiData::default();
+        data.proxy.running = true;
+        let action = app.on_key(key(KeyCode::Enter), &data);
+        assert!(matches!(action, Action::None));
+        match app.overlay {
+            Overlay::Confirm(confirm) => {
+                assert!(matches!(confirm.action, ConfirmAction::ProxyRotateIp));
+            }
+            other => panic!("expected confirm overlay, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn settings_proxy_auto_failover_prompts_to_enable_proxy_when_not_routed() {
         let mut app = App::new(Some(AppType::Claude));
         app.route = Route::SettingsProxy;

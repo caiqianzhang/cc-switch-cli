@@ -122,6 +122,7 @@ pub(super) fn local_proxy_settings_item_label(item: &LocalProxySettingsItem) -> 
         LocalProxySettingsItem::ListenAddress => texts::tui_settings_proxy_listen_address_label(),
         LocalProxySettingsItem::ListenPort => texts::tui_settings_proxy_listen_port_label(),
         LocalProxySettingsItem::AutoFailover => crate::t!("Automatic failover", "自动故障转移"),
+        LocalProxySettingsItem::RotateIp => texts::tui_settings_proxy_rotate_ip_label(),
     }
 }
 
@@ -4119,6 +4120,21 @@ pub(super) fn render_settings_proxy(
                     texts::disabled().to_string()
                 },
             ),
+            LocalProxySettingsItem::RotateIp => (
+                local_proxy_settings_item_label(item).to_string(),
+                match crate::settings::get_ip_rotation_settings() {
+                    Some(settings) => format!(
+                        "{} 429: {}",
+                        settings.provider_id,
+                        if settings.enabled {
+                            texts::enabled()
+                        } else {
+                            texts::disabled()
+                        }
+                    ),
+                    None => texts::tui_settings_proxy_rotate_ip_not_configured().to_string(),
+                },
+            ),
         })
         .collect::<Vec<_>>();
 
@@ -4162,6 +4178,7 @@ pub(super) fn render_settings_proxy(
 
     let key_label = match LocalProxySettingsItem::ALL.get(app.settings_proxy_idx) {
         Some(LocalProxySettingsItem::AutoFailover) => texts::tui_key_toggle(),
+        Some(LocalProxySettingsItem::RotateIp) => texts::tui_key_run(),
         Some(LocalProxySettingsItem::ListenAddress) if data.proxy.running => "",
         Some(LocalProxySettingsItem::ListenPort)
             if data.proxy.has_active_worker_for(&app.app_type) =>

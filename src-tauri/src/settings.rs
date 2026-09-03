@@ -599,6 +599,9 @@ pub struct AppSettings {
     pub webdav_sync: Option<WebDavSyncSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s3_sync: Option<S3SyncSettings>,
+    /// 上游 429 自动静默重拨换 IP(ip_panel 集成);缺省关闭。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip_rotation: Option<crate::services::ip_rotation::IpRotationSettings>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup_retain_count: Option<u32>,
     /// 首选终端应用，用于会话恢复。
@@ -666,6 +669,7 @@ impl Default for AppSettings {
             security: None,
             webdav_sync: None,
             s3_sync: None,
+            ip_rotation: None,
             backup_retain_count: None,
             preferred_terminal: None,
             preferred_editor: None,
@@ -1335,6 +1339,13 @@ pub fn get_s3_sync_settings() -> Option<S3SyncSettings> {
         .read()
         .ok()
         .and_then(|settings| settings.s3_sync.clone())
+}
+
+pub fn get_ip_rotation_settings() -> Option<crate::services::ip_rotation::IpRotationSettings> {
+    settings_store()
+        .read()
+        .ok()
+        .and_then(|settings| settings.ip_rotation.clone())
 }
 
 pub fn set_s3_sync_settings(s3_sync: Option<S3SyncSettings>) -> Result<(), AppError> {

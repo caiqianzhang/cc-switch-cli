@@ -4006,6 +4006,14 @@ pub mod texts {
         }
     }
 
+    pub fn tui_key_run() -> &'static str {
+        if is_chinese() {
+            "执行"
+        } else {
+            "Run"
+        }
+    }
+
     pub fn tui_key_edit() -> &'static str {
         if is_chinese() {
             "编辑"
@@ -5317,6 +5325,70 @@ pub mod texts {
             "当前应用正在使用代理。请先停止当前应用的代理路由，再修改监听端口。"
         } else {
             "This app is using the proxy. Stop this app's proxy route before editing listen port."
+        }
+    }
+
+    pub fn tui_settings_proxy_rotate_ip_label() -> &'static str {
+        if is_chinese() {
+            "手动换 IP（重拨断网约 2–4 分钟）"
+        } else {
+            "Rotate IP now (redial drops network ~2–4 min)"
+        }
+    }
+
+    pub fn tui_settings_proxy_rotate_ip_not_configured() -> &'static str {
+        if is_chinese() {
+            "自动换 IP：未配置"
+        } else {
+            "auto IP rotation: not configured"
+        }
+    }
+
+    pub fn tui_confirm_rotate_ip_title() -> &'static str {
+        if is_chinese() {
+            "手动换 IP"
+        } else {
+            "Rotate IP now"
+        }
+    }
+
+    pub fn tui_confirm_rotate_ip_message() -> &'static str {
+        if is_chinese() {
+            "将立即重拨光猫 PPPoE 获取新出口 IP：全网断网约 2–4 分钟，期间所有请求（包括本 TUI 的上游请求）都会失败。确认执行？"
+        } else {
+            "This redials the modem's PPPoE for a new egress IP: the whole network drops for ~2–4 minutes and all requests fail during the window. Proceed?"
+        }
+    }
+
+    pub fn tui_toast_rotate_ip_requires_unix() -> &'static str {
+        if is_chinese() {
+            "手动换 IP 需要 Unix 平台上由 daemon 管理的代理。"
+        } else {
+            "Manual IP rotation requires the Unix daemon-managed proxy."
+        }
+    }
+
+    pub fn tui_toast_rotate_ip_proxy_not_running() -> &'static str {
+        if is_chinese() {
+            "代理未在运行，无法手动换 IP（需要 daemon 管理的代理 worker）。"
+        } else {
+            "The proxy is not running; manual IP rotation needs a daemon-managed worker."
+        }
+    }
+
+    pub fn tui_toast_rotate_ip_submitted() -> &'static str {
+        if is_chinese() {
+            "✓ 手动换 IP 已提交，结果以 daemon 日志为准"
+        } else {
+            "✓ Manual IP rotation submitted; outcome is logged by the daemon"
+        }
+    }
+
+    pub fn tui_toast_rotate_ip_failed() -> &'static str {
+        if is_chinese() {
+            "手动换 IP 失败"
+        } else {
+            "Manual IP rotation failed"
         }
     }
 

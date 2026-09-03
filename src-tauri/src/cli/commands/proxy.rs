@@ -24,6 +24,9 @@ pub enum ProxyCommand {
     /// Disable the persisted proxy switch
     Disable,
 
+    /// Manually trigger an IP rotation via the daemon (429 workaround)
+    RotateIp,
+
     /// Configure the selected app's proxy route
     Config {
         /// Set the global proxy listen address
@@ -57,6 +60,7 @@ pub fn execute(cmd: ProxyCommand, app: Option<AppType>) -> Result<(), AppError> 
         ProxyCommand::Show => show_proxy(),
         ProxyCommand::Enable => set_proxy_enabled(app_type, true),
         ProxyCommand::Disable => set_proxy_enabled(app_type, false),
+        ProxyCommand::RotateIp => rotate_ip(),
         ProxyCommand::Config {
             listen_address,
             listen_port,
@@ -67,6 +71,36 @@ pub fn execute(cmd: ProxyCommand, app: Option<AppType>) -> Result<(), AppError> 
             takeovers,
         } => serve_proxy(listen_address, listen_port, takeovers),
     }
+}
+
+#[cfg(unix)]
+fn rotate_ip() -> Result<(), AppError> {
+    match crate::services::ip_rotation::manual::request_via_daemon() {
+        Ok(queued) => {
+            let pids = queued
+                .worker_pids
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let en = format!(
+                "✓ Manual IP rotation submitted (worker pid: {pids}); the outcome is logged by the daemon."
+            );
+            let zh =
+                format!("✓ 手动换 IP 已提交（worker pid：{pids}）；执行结果以 daemon 日志为准。");
+            println!("{}", success(crate::t!(en.as_str(), zh.as_str())));
+            Ok(())
+        }
+        Err(message) => Err(AppError::Message(message)),
+    }
+}
+
+#[cfg(not(unix))]
+fn rotate_ip() -> Result<(), AppError> {
+    Err(AppError::Message(crate::t!(
+        "Manual IP rotation requires the Unix daemon-managed proxy.",
+        "手动换 IP 需要 Unix 平台上由 daemon 管理的代理。"
+    )))
 }
 
 fn get_state() -> Result<AppState, AppError> {
@@ -235,6 +269,14 @@ fn serve_proxy(
             #[cfg(unix)]
             let outbound_proxy_reload_task =
                 spawn_outbound_proxy_reload_listener(state.db.clone())?;
+            #[cfg(unix)]
+            // 手动换 IP(SIGUSR1)监听:与自动 429 触发共享 worker 内的执行器;
+            // 信号注册必须同步完成(见 spawn_ip_rotation_listener 注释)
+            let ip_rotation_signal_task = service
+                .ip_rotation_handle()
+                .await
+                .map(spawn_ip_rotation_listener)
+                .transpose()?;
 
             let announced_to_daemon = {
                 #[cfg(unix)]
@@ -324,6 +366,10 @@ fn serve_proxy(
             usage_maintenance_task.abort();
             #[cfg(unix)]
             outbound_proxy_reload_task.abort();
+            #[cfg(unix)]
+            if let Some(task) = ip_rotation_signal_task.as_ref() {
+                task.abort();
+            }
 
             service
                 .stop_with_restore()
@@ -364,6 +410,28 @@ fn spawn_outbound_proxy_reload_listener(
                     log::error!("[GlobalProxy] Worker failed to read saved configuration: {error}");
                 }
             }
+        }
+    }))
+}
+
+#[cfg(unix)]
+fn spawn_ip_rotation_listener(
+    handle: std::sync::Arc<crate::services::ip_rotation::IpRotationHandle>,
+) -> Result<tokio::task::JoinHandle<()>, AppError> {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    // SIGUSR1 的默认处置是终止进程(与默认被忽略的 SIGWINCH 不同),因此必须
+    // 在 spawn 前同步注册 handler:注册先于 announce_to_daemon,关闭
+    // "daemon 得知 pid" 与 "监听生效" 之间的窗口;注册失败则直接放弃 serve。
+    // 门控(启用/单飞/记账)在 worker 侧 trigger_manual 内完成。
+    let mut rotate_signal = signal(SignalKind::user_defined1())
+        .map_err(|error| AppError::Message(format!("failed to listen for SIGUSR1: {error}")))?;
+    Ok(tokio::spawn(async move {
+        while rotate_signal.recv().await.is_some() {
+            // settings 快照是进程级惰性加载:触发前刷新,读到最新 ipRotation 配置
+            let _ = crate::settings::reload_settings();
+            let outcome = handle.trigger_manual();
+            log::info!("[IP-ROTATE] manual trigger received: {}", outcome.as_str());
         }
     }))
 }

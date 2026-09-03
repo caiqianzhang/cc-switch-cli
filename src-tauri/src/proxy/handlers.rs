@@ -171,7 +171,8 @@ async fn handle_claude_request(
             .with_optimizer_config(context.optimizer_config.clone())
             .with_copilot_optimizer_config(context.copilot_optimizer_config.clone())
             .with_session(context.session_id.clone(), context.session_client_provided)
-            .with_gemini_shadow(context.state.gemini_shadow.clone()),
+            .with_gemini_shadow(context.state.gemini_shadow.clone())
+            .with_ip_rotation(context.state.ip_rotation.clone()),
         Err(error) => {
             context.state.record_request_error(&error).await;
             return proxy_error_response(error);
@@ -514,7 +515,8 @@ async fn handle_passthrough_request(
             .with_optimizer_config(context.optimizer_config.clone())
             .with_copilot_optimizer_config(context.copilot_optimizer_config.clone())
             .with_session(context.session_id.clone(), context.session_client_provided)
-            .with_codex_chat_history(context.state.codex_chat_history.clone()),
+            .with_codex_chat_history(context.state.codex_chat_history.clone())
+            .with_ip_rotation(context.state.ip_rotation.clone()),
         Err(error) => {
             context.state.record_request_error(&error).await;
             return proxy_error_response(error);
@@ -1269,6 +1271,7 @@ mod tests {
             server::ProxyServerState,
             types::{ProxyConfig, ProxyStatus},
         },
+        services::ip_rotation::IpRotationHandle,
     };
     use axum::{
         body::{to_bytes, Body},
@@ -1345,6 +1348,7 @@ mod tests {
             provider_router: Arc::new(ProviderRouter::new(db)),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            ip_rotation: Arc::new(IpRotationHandle::new()),
         }
     }
 

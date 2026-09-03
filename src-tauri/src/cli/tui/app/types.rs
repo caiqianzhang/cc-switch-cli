@@ -4416,6 +4416,7 @@ pub enum ConfirmAction {
     UsageQueryNotice,
     RebuildCodexUsage,
     ManagedAuthCancelLogin,
+    ProxyRotateIp,
     ProxyEnableAndAutoFailover {
         app_type: AppType,
     },

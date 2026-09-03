@@ -138,6 +138,7 @@ mod tests {
     use tokio::sync::RwLock;
 
     use crate::proxy::providers::gemini_shadow::GeminiShadowStore;
+    use crate::services::ip_rotation::IpRotationHandle;
     use crate::{database::Database, proxy::types::ProxyConfig};
 
     struct TempHome {
@@ -217,6 +218,7 @@ mod tests {
             provider_router: Arc::new(ProviderRouter::new(db)),
             codex_chat_history: Arc::new(Default::default()),
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
+            ip_rotation: Arc::new(IpRotationHandle::new()),
         }
     }
 

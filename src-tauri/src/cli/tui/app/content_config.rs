@@ -1051,6 +1051,35 @@ impl App {
         }
     }
 
+    /// 手动换 IP:要求 daemon 管理的代理在运行;确认后经 IPC 触发。
+    pub(crate) fn request_manual_ip_rotation(&mut self, data: &UiData) -> Action {
+        #[cfg(not(unix))]
+        {
+            let _ = data;
+            self.push_toast(
+                texts::tui_toast_rotate_ip_requires_unix(),
+                ToastKind::Warning,
+            );
+            return Action::None;
+        }
+        #[cfg(unix)]
+        {
+            if !data.proxy.running {
+                self.push_toast(
+                    texts::tui_toast_rotate_ip_proxy_not_running(),
+                    ToastKind::Warning,
+                );
+                return Action::None;
+            }
+            self.overlay = Overlay::Confirm(ConfirmOverlay {
+                title: texts::tui_confirm_rotate_ip_title().to_string(),
+                message: texts::tui_confirm_rotate_ip_message().to_string(),
+                action: ConfirmAction::ProxyRotateIp,
+            });
+            Action::None
+        }
+    }
+
     pub(crate) fn request_auto_failover_toggle(&mut self, data: &UiData) -> Action {
         if !supports_failover_controls(&self.app_type) {
             return Action::None;
@@ -1117,6 +1146,7 @@ impl App {
                 Some(LocalProxySettingsItem::AutoFailover) => {
                     self.request_auto_failover_toggle(data)
                 }
+                Some(LocalProxySettingsItem::RotateIp) => self.request_manual_ip_rotation(data),
                 Some(LocalProxySettingsItem::ListenAddress) => {
                     if data.proxy.running {
                         self.push_toast(

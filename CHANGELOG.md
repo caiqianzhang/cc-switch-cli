@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Proxy / IP Rotation on 429**: Add opt-in `ipRotation` settings block. When a proxied request receives HTTP 429 from the configured provider (default `opencode`), the proxy dials the China Mobile Fibhome modem directly in a background task to obtain a new egress IP: super-admin credentials are auto-fetched over Telnet (ARP discovery + `telnetenable.cgi`, 12h in-process cache with refresh-on-login-failure self-healing), PPPoE is redialed via `wan_modify` (`Manual_Setting` 2→1 with status polling), and on success the new global IPv6 is upserted into the Baidu Cloud DNS AAAA record (BCE V1 signature). Includes an in-process inflight guard and a configurable cooldown. Requests keep flowing through the existing failover path while the redial runs. Disabled by default; configure via `~/.cc-switch/settings.json` (`"ipRotation": {"enabled": true, "providerId": "opencode", "pppoeUsername": "...", "pppoePassword": "...", "dnsAk": "...", "dnsSk": "...", "cooldownSecs": 600}`) with environment-variable fallbacks `PPPOE_USERNAME`/`PPPOE_PASSWORD` and `BAIDU_AK`/`BAIDU_SK`/`BAIDU_ZONE`/`BAIDU_SUB`. Do not run the ip_panel panel at the same time: the modem allows only one admin session.
+- **Proxy / Manual IP Rotation**: Add a manual trigger for the 429 IP-rotation flow: `cc-switch proxy rotate-ip` and a "Rotate IP now" entry in the TUI proxy settings (confirm dialog) both route through the daemon IPC socket to a `SIGUSR1` signal delivered to the running proxy worker, executing on the same in-process executor as automatic 429 triggers (shared single-flight gate). Manual triggers bypass the cooldown but still require `ipRotation.enabled` and still record the attempt, so subsequent automatic 429 triggers honor the cooldown. The rotation outcome is logged by the worker (`cc-switchd.log`); rejections (not enabled / no running worker / signal failure) are reported immediately.
+
+### Fixed
+
+- **Daemon / Worker Logs**: Stream proxy-worker stderr into the daemon log line-by-line (`[worker:claude] …`) instead of swallowing it into memory that was only printed on abnormal exit; worker-side INFO logs (IP-rotation pipeline, proxy runtime) are now visible in `cc-switchd.log`, and daemon-managed workers default to `info` level.
+- **Proxy / IP Rotation DNS**: Scope the post-redial IPv6 scan to the modem-facing interface (resolved via policy routing from `routerUrl`). On multi-NIC machines a global scan could return an unrelated uplink's address, making the AAAA update a no-op even though the rotated line's address had changed.
+- **Proxy / IP Rotation DNS**: Extend the wait for the post-redial new global IPv6 from 120s to 300s — SLAAC recovery can be slower than the IPv4 reconnect, which previously made the DNS AAAA update give up and leave the record stale.
+
 ## [5.10.4] - 2026-08-30
 
 ### Added
